@@ -1,0 +1,3 @@
+alias bk="/opt/rocm/llvm/bin/clang++ -x assembler -target amdgcn--amdhsa --offload-arch=gfx942"
+alias bt="/opt/rocm/bin/hipcc --offload-arch=gfx942  fmoe.cpp -o fmoe.exe"
+alias gtt="sudo rocprofv2 -i input.txt --plugin att auto ./fmoe.exe"
