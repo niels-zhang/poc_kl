@@ -14,7 +14,7 @@
 #ifdef HALF
 #include "half.hpp"
 #endif
-#include "fmha_asm.hpp"
+#include "fmoe.hpp"
 // #define PER_PIXEL_CHECK
 #define ASSERT_ON_FAIL
 #define MFMA
@@ -209,20 +209,18 @@ int main(int argc, char **argv)
     // int lda = m*sizeof(float);
     // int ldb = n*sizeof(float);
     // int ldc = m*sizeof(float);
-    int b = 1;     // get_int("M", HGEMM_M);
-    int h = 16;    // get_int("N", HGEMM_N);
-    int s = 16384; // get_int("K", HGEMM_K);
-    int d = 128;
-    int atm_f32 = 1;
-    int skip_dq_rd = 1;
-    int mask = 0;
-    int mask_kb = 1;
-    int ioperm = 1; //0: bshd, 1:bhsd -----lse,D,dQ always keep in bhsd layout
-    int qa_rt = 1; //mqa/gqa ratio
+    int b = 20;     // get_int("M", HGEMM_M);
+    int d = 512;    // get_int("N", HGEMM_N);
+    int hdim = 512; // get_int("K", HGEMM_K);
+    int eprt = 1;
+    int topk = 1;
+    int even_dist = 1;
+    int seed = 0;
 
-    int ts_qo = 32;
-    int ts_kv = 128;
+    int sub_X = 32;
+    int sub_GU = 512;
     int dump_result = 0;
+    int type = BF16;
     std::vector<std::string> options;
     for (int i = 1; i < argc; i++)
     {
@@ -230,166 +228,118 @@ int main(int argc, char **argv)
     }
     std::map<std::string, int> parsedOptions = parse_options(options);
     get_param(parsedOptions, "b", b);
-    get_param(parsedOptions, "h", h);
-    get_param(parsedOptions, "s", s);
     get_param(parsedOptions, "d", d);
+    get_param(parsedOptions, "hdim", hdim);
+    get_param(parsedOptions, "eprt", eprt);
     get_param(parsedOptions, "dump_result", dump_result);
-    get_param(parsedOptions, "atm_f32", atm_f32);
-    get_param(parsedOptions, "mask", mask);
-    get_param(parsedOptions, "mask_kb", mask_kb);
-    get_param(parsedOptions, "ioperm", ioperm);
-    get_param(parsedOptions, "subk", ts_kv);
-    get_param(parsedOptions, "qa_rt", qa_rt);
+    get_param(parsedOptions, "topk", topk);
+    get_param(parsedOptions, "even_dist", even_dist);
+    get_param(parsedOptions, "seed", seed);
+    get_param(parsedOptions, "sub_X", sub_X);
+    get_param(parsedOptions, "sub_GU", sub_GU);
 
     std::cout << "b:" << b << std::endl;
-    std::cout << "h:" << h << std::endl;
-    std::cout << "s:" << s << std::endl;
     std::cout << "d:" << d << std::endl;
+    std::cout << "hdim:" << hdim << std::endl;
+    std::cout << "eprt:" << eprt << std::endl;
     std::cout << "dump_result:" << dump_result << std::endl;
-    std::cout << "atm_f32:" << atm_f32 << std::endl;
-    std::cout << "skip_dq_rd:" << skip_dq_rd << std::endl;
-    std::cout << "mask:" << mask << std::endl;
-    std::cout << "mask_kb:" << mask_kb << std::endl;
-    std::cout << "ioperm:" << ioperm << std::endl;
-    std::cout << "subk:" << ts_kv << std::endl;
-    std::cout << "qa_rt:" << qa_rt << std::endl;
+    std::cout << "topk:" << topk << std::endl;
+    std::cout << "even_dist:" << even_dist << std::endl;
+    std::cout << "seed:" << seed << std::endl;
+    std::cout << "sub_X:" << sub_X << std::endl;
+    std::cout << "sub_GU:" << sub_GU << std::endl;
 
-    int stride_tg = ts_kv * d * 2;
-    int stride_head = s * d * 2;
-    int stride_batch = h * s * d * 2;
-    int stride_seqlen = d * 2;
+    float16 *host_X, *host_G, *host_D, *host_O;
+    float *host_W;
+    unsigned int *host_TKI;
 
-    int stride_head_kv = s * d * 2;
-    int stride_batch_kv = (h/qa_rt) * s * d * 2;
-    int stride_seqlen_kv = d * 2;
-    int stride_seqlen_dkv = d * 2;
+    float16 *dev_X, *dev_G, *dev_D, *dev_O;
+    float *dev_W;
+    unsigned int *dev_TKI_buf;
 
-    if (ioperm == 0)//bshd
-    {
-        stride_seqlen = h * d * 2;
-        stride_head = d * 2;
-        stride_batch = h * s * d * 2;
+    int sz_X, sz_G, sz_U, sz_D, sz_O, sz_W;
+    sz_X        = b*d;
+    sz_G        = sz_D     = eprt*d*hdim;
+    sz_O        = b*d;
+    sz_W        = b*topk;
 
-        stride_seqlen_kv = (h/qa_rt) * d * 2;
-        stride_seqlen_dkv = h * d * 2;
-        stride_tg = ts_kv * stride_seqlen_kv;
-        stride_head_kv = d * 2;
-        stride_batch_kv = (h/qa_rt) * s * d * 2;
-    }
+    host_X = (float16 *)malloc(sz_X * sizeof(float) / 2);
+    host_G = (float16 *)malloc(sz_G * sizeof(float) / 2);
+    host_D = (float16 *)malloc(sz_D * sizeof(float) / 2);
+    host_O = (float16 *)malloc(sz_O * sizeof(float) / 2);
 
-    // int lda = m*sizeof(float);
-    // int ldb = n*sizeof(float);
-    // int ldc = m*sizeof(float);
-    float k_log2e = log2f(expf(1));
-    float k_scalar = sqrt(d);
+    host_W = (float *)malloc(sz_W * sizeof(float));
+    host_TKI = (unsigned int *)malloc(sz_W * sizeof(int));
 
-    k_scalar = (float)(1.0 / (double)k_scalar);
-    // float alpha = 1.0f;
-    // float16 *host_dq, *host_dk, *host_dv;
-    float *host_q, *host_k, *host_v, *host_do;
-    float *host_lse, *host_odo;
-
-    long sz_mx = b * h * s * d;
-    int sz_lsd = b * h * s;
-    int sz_mx_pad = 0;//ts_qo * 4 * d;
-    int sz_lsd_pad = 0;//ts_qo * 4;
-    long sz_mx_dq = 0;
-
-    if (atm_f32 == 2)
-       sz_mx_dq = sz_mx * (s/ts_kv);
-    else
-       sz_mx_dq = sz_mx;
-
-    // float16 *fp16_a, *fp16_b, *fp16_c, *dev_a, *dev_b, *dev_c;
-    float16 *host_fp16_q, *host_fp16_k, *host_fp16_v, *host_fp16_do;
-    float16 *host_fp16_dq, *host_fp16_dk, *host_fp16_dv;
-    float16 *dev_q, *dev_k, *dev_v, *dev_do, *dev_dk, *dev_dv;
-    float *dev_lse, *dev_odo, *host_fp32_dq, *dev_dq;
-
-    // int bdx = 256;
-    // int gdx = ((m+127)>>7)*((n+127)>>7);
-
-    // fp32 on host
-    // host_a = (float*)malloc(lda*k);
-    // host_b = (float*)malloc(ldb*k);
-    // host_c = (float*)malloc(ldc*n);
-    host_q = (float *)malloc(sz_mx * sizeof(float));
-    host_k = (float *)malloc(sz_mx * sizeof(float));
-    host_v = (float *)malloc(sz_mx * sizeof(float));
-    host_do = (float *)malloc(sz_mx * sizeof(float));
-
-    host_lse = (float *)malloc(sz_lsd * sizeof(float));
-    host_odo = (float *)malloc(sz_lsd * sizeof(float));
-
-    // rand_vector_2d(host_a, k, m, lda/sizeof(float));
-    // rand_vector_2d(host_b, k, n, ldb/sizeof(float));
-    int off_mx = 0;
-    int off_lsd = 0;
     int init_pattern = 0;
     get_param(parsedOptions, "init_pattern", init_pattern);
 
-    // for (int i = 0; i < b; i++)
-    //{
-    //     for (int j = 0; j < h; j++)
-    //     {
-    //         rand_vector_2d(host_q+off_mx, d, s, s);
-    //         rand_vector_2d(host_k+off_mx, d, s, s);
-    //         rand_vector_2d(host_v+off_mx, d, s, s);
-    //         rand_vector_2d(host_do+off_mx, d, s, s);
-    //         off_mx += s*d;
-    //         rand_vector_2d(host_lse+off_lsd, s, 1, 1);
-    //         rand_vector_2d(host_odo+off_lsd, s, 1, 1);
-    //         off_lsd += s;
-    //     }
-    // }
+            srand(++seed);
+            moe_init(host_X,         1,      b,      d,        type, init_pattern);
+            srand(++seed);
+            moe_init(host_G,         eprt,   hdim,     d,        type, init_pattern);
+            srand(++seed);
+            moe_init(host_D,         eprt,   d,      hdim,       type, init_pattern);
+            srand(++seed);
+            moe_init(host_W,         1,      b,      topk,     FP32, init_pattern);
+            if (topk != 1) { //if only one expert, no need softmax
+                moe_weight_softmax(host_W, b,topk);
+            }
+            srand(++seed);
+            //if even_dist==0, W_buf may be rewritten inside, depend on internal value useSimpleRandom
+            moe_topk_init(host_TKI, host_W, eprt, b, topk, even_dist, host_X, d, type, init_pattern);
 
-    // fp16 on host
-    // fp16_a = (float16*)malloc(lda*(k>>1));
-    // fp16_b = (float16*)malloc(ldb*(k>>1));
-    // fp16_c = (float16*)malloc(ldc*(n>>1));
+    memset(host_O, 0, sz_O * sizeof(float) / 2);
 
-    host_fp16_q = (float16 *)malloc(sz_mx * sizeof(float) / 2);
-    host_fp16_k = (float16 *)malloc(sz_mx * sizeof(float) / 2);
-    host_fp16_v = (float16 *)malloc(sz_mx * sizeof(float) / 2);
-    host_fp16_do = (float16 *)malloc(sz_mx * sizeof(float) / 2);
+        unsigned int sz_stp, sz_sw, sz_sep, sub_X_cnt = 0;//initialize sub_X_cnt to 0, important
+        sz_stp = sz_sw = topk*b + eprt*sub_X-1; //max_length
+        sz_sep = (sz_stp + sub_X - 1)/sub_X;        //max_length
 
-    srand(1);
-    fmha_batch_init(host_fp16_q, b, h, s, d, FP16, init_pattern);
-    srand(2);
-    fmha_batch_init(host_fp16_k, b, h, s, d, FP16, init_pattern);
-    srand(3);
-    fmha_batch_init(host_fp16_v, b, h, s, d, FP16, init_pattern);
-    srand(4);
-    fmha_batch_init(host_fp16_do, b, h, s, d, FP16, init_pattern);
-    srand(5);
-    fmha_batch_init(host_lse, b, h, s, 1, FP32, init_pattern);
-    srand(6);
-    fmha_batch_init(host_odo, b, h, s, 1, FP32, init_pattern);
-    // convert fp32 a and b into fp16 on host
-    // for(int i=0; i<m*k; i++)fp16_a[i]=__float2half_rn(host_a[i]);
-    // for(int i=0; i<n*k; i++)fp16_b[i]=__float2half_rn(host_b[i]);
-    // for(int i=0; i<sz_mx; i++) host_fp16_q[i] =__float2half_rn(host_q[i]);
-    // for(int i=0; i<sz_mx; i++) host_fp16_k[i] =__float2half_rn(host_k[i]);
-    // for(int i=0; i<sz_mx; i++) host_fp16_v[i] =__float2half_rn(host_v[i]);
-    // for(int i=0; i<sz_mx; i++) host_fp16_do[i]=__float2half_rn(host_do[i]);
+        unsigned int*   sorted_token_ids_ptr  = malloc(sz_stp * sizeof(unsigned int));
+        float* sorted_weight_buf     = malloc(sz_sw * sizeof(float));
+        unsigned int*   sorted_expert_ids_ptr = malloc(sz_sep * sizeof(unsigned int));
 
-    host_fp32_dq = (float *)malloc(sz_mx_dq * sizeof(float));
-    host_fp16_dq = (float16 *)malloc(sz_mx * sizeof(float) / 2);
-    host_fp16_dk = (float16 *)malloc(sz_mx * sizeof(float) / 2);
-    host_fp16_dv = (float16 *)malloc(sz_mx * sizeof(float) / 2);
-    memset(host_fp32_dq, 0, sz_mx * sizeof(float));
+        moe_twe_ptr_gen(sorted_token_ids_ptr, sorted_weight_buf, sorted_expert_ids_ptr, sub_X_cnt, host_W, host_TKI, b, eprt, topk, sub_X);
 
-    if (dump_result)
-    {
-        fmha_dump_batch_inHex(host_fp16_q, "Q.hex", b, h, s, d, FP16);
-        fmha_dump_batch_inHex(host_fp16_k, "K.hex", b, h, s, d, FP16);
-        fmha_dump_batch_inHex(host_fp16_v, "V.hex", b, h, s, d, FP16);
-        fmha_dump_batch_inHex(host_fp16_do, "dO.hex", b, h, s, d, FP16);
-        fmha_dump_batch_inHex(host_lse, "L.hex", b, h, s, 1, FP32);
-        fmha_dump_batch_inHex(host_odo, "D.hex", b, h, s, 1, FP32);
-    }
+        if(dump_result)   
+        {
+            moe_dump_inHex(host_X,           "X.hex" ,       1,     b,       d,        type,   0); //batch*dim      row major
+            moe_dump_inHex(host_G,           "G.hex" ,       eprt,  hdim,      d,        type,   1); //dim*hidden_dim col major
+            moe_dump_inHex(host_D,           "D.hex" ,       eprt,  d,       hdim,       type,   1); //hidden_dim*dim col major
+            moe_dump_inHex(host_W,           "W.hex" ,       1,     b,       topk,     FP32,   0); //batch*topk     row major
 
-    printf("dqsize: %zuM\n", sz_mx_dq*4/1024/1024);
+            moe_dump_topk_inHex  (host_TKI,  "Topk.hex",     b, topk);
+            moe_dump_topk_inValue(host_TKI,  "Topk.txt",     b, topk);
+
+            moe_dump_weight_inHex  (host_W,  "Weight.hex",   b, topk);
+            moe_dump_weight_inValue(host_W,  "Weight.txt",   b, topk);
+
+            unsigned int *eprt_slices = malloc(eprt * sizeof(unsigned int));
+            memset(eprt_slices, 0, eprt*sizeof(unsigned int)); //init to 0, important
+            for (unsigned int i = 0; i < sub_X_cnt; i++) {
+                eprt_slices[sorted_expert_ids_ptr[i]]++;
+            }
+            moe_dump_topk_inHex  (sorted_expert_ids_ptr, "Exp_IDs.hex", 1, sub_X_cnt);
+            moe_dump_topk_inValue(sorted_expert_ids_ptr, "Exp_IDs.txt", 1, sub_X_cnt);
+
+            moe_twe_ptr_dump_inHex  ("SortedTokenWeights.hex", sorted_token_ids_ptr, sorted_weight_buf, eprt_slices, eprt, sub_X);
+            moe_twe_ptr_dump_inValue("SortedTokenWeights.txt", sorted_token_ids_ptr, sorted_weight_buf, eprt_slices, eprt, sub_X);
+            free(eprt_slices);
+        }
+        //-----host buffer data init end-------//
+
+        printf("Calculating CPU result ~~~~~\n");
+        //generate reference data. standard golden generation should be done before shuffle
+        moe_ref_std(host_X, host_G, U_buf, host_D, host_W, host_TKI, 
+                    X_dqn_buf, G_dqn_buf, D_dqn_buf, Smooth_qnt_buf,
+                    cpu_O_buf, atm_f32,
+                    batch, hidden_dim, dim, eprt, topk, sub_X, sub_GU,
+                    type, dbg_trace, layout);
+
+        moe_shuffle(host_G, eprt, hdim, d,  true, type, layout);
+        moe_shuffle(host_D, eprt, d,  hdim, true, type, layout);
+
+   
 
     HIP_CALL(hipSetDevice(0));
     // fp16 on device
