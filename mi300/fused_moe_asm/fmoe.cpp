@@ -25,90 +25,6 @@
 #endif
 
 using float16 = half_float::half;
-static inline bool valid_vector(const float *ref, const float16 *pred, int n, double nrms = 1e-3)
-{
-    double s0 = 0.0;
-    double s1 = 0.0;
-#ifdef PER_PIXEL_CHECK
-    int pp_err = 0;
-#endif
-    int i_start = 0, i_end = n;
-    int i_num = i_end - i_start;
-    for (int i = i_start; i < i_end; ++i)
-    {
-        double ri = (double)ref[i];
-        double pi = (double)pred[i];
-        double d = ri - pi;
-        double dd = d * d;
-        double rr = 2.0 * ri * ri;
-        s0 += dd;
-        s1 += rr;
-
-#ifdef PER_PIXEL_CHECK
-        double delta = ABS(ri - pi) / ri;
-        if (delta > 1e-3)
-        {
-#ifdef ASSERT_ON_FAIL
-            if (pp_err < 100)
-                printf("diff at %4d, ref:%lf, pred:%lf(0x%04x), d:%lf\n", i, ri, pi, ((uint16_t *)pred)[i], delta);
-#endif
-            pp_err++;
-        }
-#endif
-    }
-    //    printf("pp_crr:%d, pp_err:%d, crr_ratio:%.3f, nrms:%lf, s0:%lf, s1:%lf\n",i_num-pp_err, pp_err, (float)(i_num-pp_err)/(float)i_num, sqrt(s0/s1),s0,s1);
-
-    return (sqrt(s0 / s1) < nrms)
-#ifdef PER_PIXEL_CHECK
-           && (pp_err == 0)
-#endif
-        ;
-}
-
-void hgemm_cr_kpack2(
-    float *ptr_c,
-    const float *__restrict__ ptr_a,
-    const float *__restrict__ ptr_b,
-    float alpha,
-    unsigned int m,
-    unsigned int n,
-    unsigned int k,
-    unsigned int lda,
-    unsigned int ldb,
-    unsigned int ldc)
-{
-#ifdef USE_MKL
-    cblas_sgemm(CblasColMajor, CblasNoTrans, CblasTrans,
-                m, n, k, alpha, ptr_a, lda, ptr_b, ldb, 0, ptr_c, ldc);
-#else
-    // change the layout
-    unsigned int im, in, ik;
-    for (in = 0; in < n; in++)
-    {
-        for (im = 0; im < m; im++)
-        {
-#ifndef MFMA
-            float c = .0;
-            for (ik = 0; ik < (k >> 1); ik++)
-            {
-                c += ptr_a[ik * lda * 2 + im * 2] * ptr_b[ik * ldb * 2 + in * 2];
-                c += ptr_a[ik * lda * 2 + im * 2 + 1] * ptr_b[ik * ldb * 2 + in * 2 + 1];
-            }
-            ptr_c[in * ldc + im] = alpha * c;
-#endif
-
-#ifdef MFMA
-            float c = .0;
-            for (ik = 0; ik < (k >> 2); ik++)
-            {
-                c += ptr_a[ik * 4 * lda + im * 4 + 0] * ptr_b[ik * 4 * ldb + in * 4 + 0] + ptr_a[ik * 4 * lda + im * 4 + 1] * ptr_b[ik * 4 * ldb + in * 4 + 1] + ptr_a[ik * 4 * lda + im * 4 + 2] * ptr_b[ik * 4 * ldb + in * 4 + 2] + ptr_a[ik * 4 * lda + im * 4 + 3] * ptr_b[ik * 4 * ldb + in * 4 + 3];
-            }
-            ptr_c[in * ldc + im] = alpha * c;
-#endif
-        }
-    }
-#endif
-}
 
 #define HIP_CALL(call)                                                 \
     do                                                                 \
@@ -129,37 +45,8 @@ static inline int get_int(const char *env_name, int def_value)
     return def_value;
 }
 
-void rand_vector_2d(float *v, int row, int col, int ld)
-{
-    int r, c;
-    static int flag = 0;
-    if (!flag)
-    {
-        srand(time(NULL));
-        flag = 1;
-    }
-
-    for (r = 0; r < row; r++)
-    {
-        for (c = 0; c < col; c++)
-        {
-            v[r * ld + c] = ((float)(rand() % 100)) / 100.0f;
-            // v[r*ld+c] = ((float)(r % 100)+1) / 100.0f + ((float)(c % 100)+1) / 1000.0f;
-            // v[r*ld+c] = 1.0;
-        }
-    }
-}
-
-// #define HSACO "hgemm128x128.hsaco"
 #define HSACO "kernel.co"
-// #define HSACO "hgemm_128x128_kpack2"
 #define HSA_KERNEL "kernel_func"
-
-// #define Batch    1
-// #define Head_num 1
-// #define seq_len  128
-// #define head_dim  128
-// #define seq_len  128
 
 std::map<std::string, int> parse_options(const std::vector<std::string> &optionList)
 {
@@ -193,6 +80,7 @@ void get_param(std::map<std::string, int> parsedOptions, std::string key, int &v
 
 int main(int argc, char **argv)
 {
+    /*
     hipModule_t module;
     hipFunction_t kernel_func;
     hipEvent_t evt_00, evt_11;
@@ -578,4 +466,6 @@ int main(int argc, char **argv)
     free(host_print);
     hipFree(print);
 #endif
+    // printf("CU:%d, TIPS:%.3f(2x:%.3f, 4x:%.3f), cost:%fms per loop\n", num_cu, tips, 2*tips, 4*tips, time_per_loop);
+    */
 }
