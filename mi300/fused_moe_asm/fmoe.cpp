@@ -89,17 +89,17 @@ int main(int argc, char **argv)
 
     int validate = get_int("VALIDATE", 0);
     
-    unsigned int batch = 20;
-    unsigned int dim = 512;
-    unsigned int hidden_dim = 512;
-    unsigned int eprt = 1;
-    unsigned int topk = 1;
-    unsigned int dump_result = 1;
+    unsigned int batch = 128;
+    unsigned int dim = 8192;
+    unsigned int hidden_dim = 1024;
+    unsigned int eprt = 32;
+    unsigned int topk = 5;
+    unsigned int dump_result = 0;
     unsigned int even_dist = 1;
     unsigned int seed = 0;
     unsigned int sub_X = 32;
     unsigned int sub_GU = 512;
-    unsigned int total_loop = 1;
+    unsigned int total_loop = 10;
     unsigned int init_pattern = 0;
     unsigned int layout = LAYOUT_16X16;
     
@@ -485,7 +485,7 @@ int main(int argc, char **argv)
      
     if (dump_result)
     { 
-        moe_dump_inHex(gpu_O_buf,  "gpu_O.hex", 1, batch, dim, type);
+        moe_dump_inHex((float16 *)gpu_O_buf,  "gpu_O.hex", 1, batch, dim, type);
     }
 
     free(X_buf);
