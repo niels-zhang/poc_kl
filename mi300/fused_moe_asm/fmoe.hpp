@@ -18,7 +18,7 @@ using cl_float          = float;
 using uint32            = unsigned int;
 using int32             = int;
 using uint16            = unsigned short;
-using float16           = half_float::half;
+using float16           = unsigned short;
 using T                 = float16;
 
 const float f_log2E     = log2f(expf(1));
