@@ -110,19 +110,19 @@ int main(int argc, char **argv)
     }
     
     std::map<std::string, unsigned int> parsedOptions = parse_options(options);
-    get_param(parsedOptions, "batch", batch);
-    get_param(parsedOptions, "dim", dim);
-    get_param(parsedOptions, "hidden_dim", hidden_dim);
-    get_param(parsedOptions, "eprt", eprt);
-    get_param(parsedOptions, "topk", topk);
+    get_param(parsedOptions, "batch",       batch);
+    get_param(parsedOptions, "dim",         dim);
+    get_param(parsedOptions, "hidden_dim",  hidden_dim);
+    get_param(parsedOptions, "eprt",        eprt);
+    get_param(parsedOptions, "topk",        topk);
     get_param(parsedOptions, "dump_result", dump_result);
-    get_param(parsedOptions, "even_dist", even_dist);
-    get_param(parsedOptions, "seed", seed);
-    get_param(parsedOptions, "sub_X", sub_X);
-    get_param(parsedOptions, "sub_GU", sub_GU);
-    get_param(parsedOptions, "total_loop", total_loop);
-    get_param(parsedOptions, "init_pattern", init_pattern);
-    get_param(parsedOptions, "layout", layout);
+    get_param(parsedOptions, "even_dist",   even_dist);
+    get_param(parsedOptions, "seed",        seed);
+    get_param(parsedOptions, "sub_X",       sub_X);
+    get_param(parsedOptions, "sub_GU",      sub_GU);
+    get_param(parsedOptions, "total_loop",  total_loop);
+    get_param(parsedOptions, "init_pattern",init_pattern);
+    get_param(parsedOptions, "layout",      layout);
 
     std::cout << "batch:"       << batch        << std::endl;
     std::cout << "dim:"         << dim          << std::endl;
@@ -276,19 +276,16 @@ int main(int argc, char **argv)
     moe_shuffle(G_buf, eprt, hidden_dim, dim,  true, type, (DATA_LAYOUT)layout);
     moe_shuffle(D_buf, eprt, dim,  hidden_dim, true, type, (DATA_LAYOUT)layout);
 
-   
     float16 *dev_X, *dev_G, *dev_D, *dev_O;
     unsigned int*  dev_STP;
     float* dev_SW;
     unsigned int*  dev_SEP;
 
     HIP_CALL(hipSetDevice(0));
- 
     HIP_CALL(hipMalloc(&dev_X, sz_X * sizeof(float) / 2));
     HIP_CALL(hipMalloc(&dev_G, sz_G * sizeof(float) / 2));
     HIP_CALL(hipMalloc(&dev_D, sz_D * sizeof(float) / 2));
     HIP_CALL(hipMalloc(&dev_O, sz_O * sizeof(float) / 2));
-
     HIP_CALL(hipMalloc(&dev_STP, sz_stp * sizeof(unsigned int)));
     HIP_CALL(hipMalloc(&dev_SW,   sz_sw * sizeof(float)));
     HIP_CALL(hipMalloc(&dev_SEP, sz_sep * sizeof(unsigned int)));
@@ -429,10 +426,8 @@ int main(int argc, char **argv)
     void *config[] = {HIP_LAUNCH_PARAM_BUFFER_POINTER, &args, HIP_LAUNCH_PARAM_BUFFER_SIZE,
                       &arg_size, HIP_LAUNCH_PARAM_END};
 
-    
     int warm_ups = 0;
     int i;
-
     int bdx = 256;
     int gdx = ((hidden_dim+sub_GU-1)/sub_GU);
     int gdy = sub_X_cnt;
@@ -501,6 +496,10 @@ int main(int argc, char **argv)
     free(cpu_O_buf);
     free(W_buf);
     free(TKI_buf);
+    free(X_dqn_buf);
+    free(G_dqn_buf);
+    free(D_dqn_buf);
+    free(Smooth_qnt_buf);
     free(sorted_token_ids_ptr);
     free(sorted_weight_buf);
     free(sorted_expert_ids_ptr);
