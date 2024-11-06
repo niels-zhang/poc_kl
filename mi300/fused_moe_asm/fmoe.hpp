@@ -689,14 +689,14 @@ static void moe_twe_ptr_gen(uint32 *sorted_token_ids_ptr, cl_float *sorted_weigh
                             uint32 batch, uint32 eprt, uint32 topk, uint32 sub_X) {
     uint32 **eprt_tokens            = new uint32*[eprt];
     cl_float **eprt_token_weights   = new cl_float*[eprt];
-    uint32 *eprt_slices             = new uint32[eprt];
-    uint32 *eprt_slice_idxs         = new uint32[eprt];
+    uint32 *eprt_slices             = new uint32[eprt]();
+    uint32 *eprt_slice_idxs         = new uint32[eprt]();
 
     //init
     for (uint32 e = 0; e < eprt; e++) {
         eprt_slices[e]          = 1;
         eprt_slice_idxs[e]      = 0;
-        eprt_tokens[e]          = new uint32[sub_X];
+        eprt_tokens[e]          = new uint32[sub_X]();
         eprt_token_weights[e]   = new cl_float[sub_X];
         for(uint32 x = 0; x < sub_X; x++) {
             eprt_tokens[e][x]           = batch;
@@ -715,7 +715,7 @@ static void moe_twe_ptr_gen(uint32 *sorted_token_ids_ptr, cl_float *sorted_weigh
             if (idx > eprt_slices[e]*sub_X-1) {
                 eprt_slices[e]++;
                 uint32 newSize          = eprt_slices[e]*sub_X;
-                uint32 *eprt_new        = new uint32[newSize];
+                uint32 *eprt_new        = new uint32[newSize]();
                 cl_float *eprt_w_new    = new cl_float[newSize];
                 for (uint32 idx = (eprt_slices[e]-1)*sub_X; idx < newSize; idx++) {
                     eprt_new[idx]       = batch;
