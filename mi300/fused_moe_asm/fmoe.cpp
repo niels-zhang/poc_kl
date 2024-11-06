@@ -89,17 +89,17 @@ int main(int argc, char **argv)
 
     int validate = get_int("VALIDATE", 0);
     
-    unsigned int batch = 128;
-    unsigned int dim = 128;
-    unsigned int hidden_dim = 128;
-    unsigned int eprt = 8;
-    unsigned int topk = 2;
+    unsigned int batch = 20;
+    unsigned int dim = 512;
+    unsigned int hidden_dim = 512;
+    unsigned int eprt = 1;
+    unsigned int topk = 1;
     unsigned int dump_result = 1;
-    unsigned int even_dist = 0;
+    unsigned int even_dist = 1;
     unsigned int seed = 0;
-    unsigned int sub_X = 16;
-    unsigned int sub_GU = 256;
-    unsigned int total_loop = 8;
+    unsigned int sub_X = 32;
+    unsigned int sub_GU = 512;
+    unsigned int total_loop = 1;
     unsigned int init_pattern = 0;
     unsigned int layout = LAYOUT_16X16;
     
@@ -187,6 +187,7 @@ int main(int argc, char **argv)
     if (topk != 1) { //if only one expert, no need softmax
         moe_weight_softmax(W_buf, batch,topk);
     }
+
     srand(++seed);
     //if even_dist==0, W_buf may be rewritten inside, depend on internal value useSimpleRandom
     moe_topk_init(TKI_buf, W_buf, eprt, batch, topk, even_dist);
@@ -198,7 +199,6 @@ int main(int argc, char **argv)
     moe_init(D_dqn_buf,     eprt,   1,          dim,        FP32, init_pattern);
     srand(++seed);
     moe_init(Smooth_qnt_buf,eprt,   1,          hidden_dim, FP32, init_pattern);
-
     // clang-format off
     // [indexing implementation-1]
     // using M_a as constexpr block_size to partition all tokens into different slices
@@ -229,12 +229,10 @@ int main(int argc, char **argv)
     sz_stp = sz_sw = topk*batch + eprt*sub_X-1; //max_length
     sz_sep = (sz_stp + sub_X - 1)/sub_X;        //max_length
 
-    uint32*   sorted_token_ids_ptr  = (uint32*)   malloc(sz_stp);
-    cl_float* sorted_weight_buf     = (cl_float*) malloc(sz_sw);
-    uint32*   sorted_expert_ids_ptr = (uint32*)   malloc(sz_sep);
-
+    uint32*   sorted_token_ids_ptr  = (uint32*)   malloc(sz_stp * sizeof(uint32));
+    cl_float* sorted_weight_buf     = (cl_float*) malloc(sz_sw  * sizeof(cl_float));
+    uint32*   sorted_expert_ids_ptr = (uint32*)   malloc(sz_sep * sizeof(uint32));
     moe_twe_ptr_gen(sorted_token_ids_ptr, sorted_weight_buf, sorted_expert_ids_ptr, sub_X_cnt, W_buf, TKI_buf, batch, eprt, topk, sub_X);
-
     if(dump_result)   
     {
         moe_dump_inHex(X_buf,           "X.hex" ,       1,     batch,       dim,        type,   0); //batch*dim      row major
@@ -253,7 +251,7 @@ int main(int argc, char **argv)
         moe_dump_weight_inHex  (W_buf,  "Weight.hex",   batch, topk);
         moe_dump_weight_inValue(W_buf,  "Weight.txt",   batch, topk);
 
-        uint32 *eprt_slices = (uint32*) malloc(eprt);
+        uint32 *eprt_slices = (uint32*) malloc(eprt * sizeof(uint32));
         memset(eprt_slices, 0, eprt*sizeof(uint32)); //init to 0, important
         for (uint32 i = 0; i < sub_X_cnt; i++) {
             eprt_slices[sorted_expert_ids_ptr[i]]++;

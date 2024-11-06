@@ -687,17 +687,17 @@ static void moe_twe_ptr_dump_inHex(std::string fileName, uint32 *sorted_token_id
 
 static void moe_twe_ptr_gen(uint32 *sorted_token_ids_ptr, cl_float *sorted_weight_buf, uint32 *sorted_expert_ids_ptr, uint32 &sub_X_cnt, cl_float *W_buf, uint32 *TKI_buf,
                             uint32 batch, uint32 eprt, uint32 topk, uint32 sub_X) {
-    uint32 **eprt_tokens            = (uint32**)    malloc(eprt*sizeof(uint32*));
-    cl_float **eprt_token_weights   = (cl_float**)  malloc(eprt*sizeof(cl_float*));
-    uint32 *eprt_slices             = (uint32*)     malloc(eprt*sizeof(uint32));
-    uint32 *eprt_slice_idxs         = (uint32*)     malloc(eprt*sizeof(uint32));
+    uint32 **eprt_tokens            = new uint32*[eprt];
+    cl_float **eprt_token_weights   = new cl_float*[eprt];
+    uint32 *eprt_slices             = new uint32[eprt];
+    uint32 *eprt_slice_idxs         = new uint32[eprt];
 
     //init
     for (uint32 e = 0; e < eprt; e++) {
         eprt_slices[e]          = 1;
         eprt_slice_idxs[e]      = 0;
-        eprt_tokens[e]          = (uint32*)  malloc(sub_X*sizeof(uint32));
-        eprt_token_weights[e]   = (cl_float*)malloc(sub_X*sizeof(cl_float));
+        eprt_tokens[e]          = new uint32[sub_X];
+        eprt_token_weights[e]   = new cl_float[sub_X];
         for(uint32 x = 0; x < sub_X; x++) {
             eprt_tokens[e][x]           = batch;
             eprt_token_weights[e][x]    = 0;
@@ -715,16 +715,16 @@ static void moe_twe_ptr_gen(uint32 *sorted_token_ids_ptr, cl_float *sorted_weigh
             if (idx > eprt_slices[e]*sub_X-1) {
                 eprt_slices[e]++;
                 uint32 newSize          = eprt_slices[e]*sub_X;
-                uint32 *eprt_new        = (uint32*)  malloc(newSize*sizeof(uint32));
-                cl_float *eprt_w_new    = (cl_float*)malloc(newSize*sizeof(cl_float));
+                uint32 *eprt_new        = new uint32[newSize];
+                cl_float *eprt_w_new    = new cl_float[newSize];
                 for (uint32 idx = (eprt_slices[e]-1)*sub_X; idx < newSize; idx++) {
                     eprt_new[idx]       = batch;
                     eprt_w_new[idx]     = 0;
                 }
                 memcpy(eprt_new, eprt_tokens[e], (eprt_slices[e]-1)*sub_X*sizeof(uint32));
                 memcpy(eprt_w_new, eprt_token_weights[e], (eprt_slices[e]-1)*sub_X*sizeof(cl_float));
-                free(eprt_tokens[e]);
-                free(eprt_token_weights[e]);
+                delete []eprt_tokens[e];
+                delete []eprt_token_weights[e];
                 eprt_tokens[e]          = eprt_new;
                 eprt_token_weights[e]   = eprt_w_new;
             }
@@ -754,11 +754,11 @@ static void moe_twe_ptr_gen(uint32 *sorted_token_ids_ptr, cl_float *sorted_weigh
 
     //clean up
     for (uint32 e = 0; e < eprt; e++) {
-        free(eprt_tokens[e]);
-        free(eprt_token_weights[e]);
+        delete []eprt_tokens[e];
+        delete []eprt_token_weights[e];
     }
-    free(eprt_slices);
-    free(eprt_slice_idxs);
+    delete []eprt_slices;
+    delete []eprt_slice_idxs;
     return;
 }
 
