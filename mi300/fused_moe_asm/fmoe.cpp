@@ -253,8 +253,6 @@ int main(int argc, char **argv)
     float *W_buf;
     unsigned int *TKI_buf;
 
-
-
     int sz_X, sz_G, sz_U, sz_D, sz_O, sz_W;
     sz_X        = b*d;
     sz_G        = sz_D     = eprt*d*hdim;
@@ -279,9 +277,9 @@ int main(int argc, char **argv)
             srand(++seed);
             moe_init(host_D,         eprt,   d,      hdim,       type, init_pattern);
             srand(++seed);
-            moe_init(host_W,         1,      b,      topk,     FP32, init_pattern);
+            moe_init(W_buf,         1,      b,      topk,     FP32, init_pattern);
             if (topk != 1) { //if only one expert, no need softmax
-                moe_weight_softmax(host_W, b,topk);
+                moe_weight_softmax(W_buf, b,topk);
             }
             srand(++seed);
             //if even_dist==0, W_buf may be rewritten inside, depend on internal value useSimpleRandom
@@ -362,39 +360,14 @@ int main(int argc, char **argv)
     printf("dev_SW : start-%p, 0x%lxKB, end-%p\n", dev_SW, sz_sw * sizeof(float)/1024, dev_SW+sz_sw);
     printf("dev_SEP: start-%p, 0x%lxKB, end-%p\n", dev_SEP,sz_sep * sizeof(unsigned int)/1024, dev_SEP+sz_sep);
 
-    if (ioperm == 1)
-    {
-        HIP_CALL(hipMemcpy(dev_q, host_fp16_q, sz_mx * sizeof(float) / 2, hipMemcpyHostToDevice));
-        HIP_CALL(hipMemcpy(dev_k, host_fp16_k, sz_mx * sizeof(float) / 2, hipMemcpyHostToDevice));
-        HIP_CALL(hipMemcpy(dev_v, host_fp16_v, sz_mx * sizeof(float) / 2, hipMemcpyHostToDevice));
-        HIP_CALL(hipMemcpy(dev_do, host_fp16_do, sz_mx * sizeof(float) / 2, hipMemcpyHostToDevice));
-    }
-    else 
-    {
-        float16 *host_fp16_perm_q = (float16 *)malloc(sz_mx * sizeof(float) / 2);
-        float16 *host_fp16_perm_k = (float16 *)malloc(sz_mx * sizeof(float) / 2);
-        float16 *host_fp16_perm_v = (float16 *)malloc(sz_mx * sizeof(float) / 2);
-        float16 *host_fp16_perm_do = (float16 *)malloc(sz_mx * sizeof(float) / 2);
-
-        fmha_batch_reshape(host_fp16_perm_q,  host_fp16_q,  b, h, s, d, FP16, 1, ioperm);
-        fmha_batch_reshape(host_fp16_perm_k,  host_fp16_k,  b, h, s, d, FP16, 1, ioperm, qa_rt);
-        fmha_batch_reshape(host_fp16_perm_v,  host_fp16_v,  b, h, s, d, FP16, 1, ioperm, qa_rt);
-        fmha_batch_reshape(host_fp16_perm_do,  host_fp16_do,  b, h, s, d, FP16, 1, ioperm);
-
-        HIP_CALL(hipMemcpy(dev_q, host_fp16_perm_q, sz_mx * sizeof(float) / 2, hipMemcpyHostToDevice));
-        HIP_CALL(hipMemcpy(dev_k, host_fp16_perm_k, sz_mx * sizeof(float) / 2, hipMemcpyHostToDevice));
-        HIP_CALL(hipMemcpy(dev_v, host_fp16_perm_v, sz_mx * sizeof(float) / 2, hipMemcpyHostToDevice));
-        HIP_CALL(hipMemcpy(dev_do, host_fp16_perm_do, sz_mx * sizeof(float) / 2, hipMemcpyHostToDevice));
-
-        free(host_fp16_perm_q);
-        free(host_fp16_perm_k);
-        free(host_fp16_perm_v);
-        free(host_fp16_perm_do);
-    }
-    HIP_CALL(hipMemcpy(dev_dq, host_fp32_dq, sz_mx * sizeof(float), hipMemcpyHostToDevice));
-
-    HIP_CALL(hipMemcpy(dev_lse, host_lse, sz_lsd * sizeof(float), hipMemcpyHostToDevice));
-    HIP_CALL(hipMemcpy(dev_odo, host_odo, sz_lsd * sizeof(float), hipMemcpyHostToDevice));
+    HIP_CALL(hipMemcpy(dev_X, host_X, sz_X * sizeof(float) / 2, hipMemcpyHostToDevice));
+    HIP_CALL(hipMemcpy(dev_G, host_G, sz_G * sizeof(float) / 2, hipMemcpyHostToDevice));
+    HIP_CALL(hipMemcpy(dev_D, host_D, sz_D * sizeof(float) / 2, hipMemcpyHostToDevice));
+    HIP_CALL(hipMemcpy(dev_O, host_O, sz_O * sizeof(float) / 2, hipMemcpyHostToDevice));
+    
+    HIP_CALL(hipMemcpy(dev_STP, sorted_token_ids_ptr,  sz_stp * sizeof(unsigned int), hipMemcpyHostToDevice));
+    HIP_CALL(hipMemcpy(dev_SW,  sorted_weight_buf,     sz_sw  * sizeof(float),        hipMemcpyHostToDevice));
+    HIP_CALL(hipMemcpy(dev_SEP, sorted_expert_ids_ptr, sz_sep * sizeof(unsigned int), hipMemcpyHostToDevice));
 
 #ifdef ASM_PRINT
     // debug pointer
@@ -416,63 +389,61 @@ int main(int argc, char **argv)
     };
     struct __attribute__((packed))
     {
-        void *ptr_dq;
+        void *ptr_O;
         p2 _p0;
-        void *ptr_dk;
+        void *ptr_X;
         p2 _p1;
-        void *ptr_dv;
+        void *ptr_G;
         p2 _p2;
-        void *ptr_q;
+        void *ptr_U;
         p2 _p3;
-        void *ptr_k;
+        void *ptr_D;
         p2 _p4;
-        void *ptr_v;
+        void *ptr_XQ;
         p2 _p5;
-        void *ptr_do;
+        void *ptr_GQ;
         p2 _p6;
-        void *ptr_lse;
+        void *ptr_DQ;
         p2 _p7;
-        void *ptr_odo;
+        void *ptr_SMQ;
         p2 _p8;
-        float scalar;
-        p3 _p9;
-        float log2e;
-        p3 _p10;
-        unsigned int seq_len;
-        p3 _p11;
-        unsigned int Ts;
+        void *ptr_STP;
+        p2 _p9;
+        void *ptr_SW;
+        p2 _p10;
+        void *ptr_SEP;
+        p2 _p11;
+        unsigned int dim;
         p3 _p12;
-        unsigned int Hs;
+        unsigned int hidden_dim;
         p3 _p13;
-        unsigned int BAs;
+        unsigned int token_cnt;
         p3 _p14;
-        unsigned int Seqs;
+        unsigned int eprt_cnt;
         p3 _p15;
-        unsigned int ratio;
+        unsigned int Xs;
         p3 _p16;
-        unsigned int Hs_kv;
+        unsigned int GUs;
         p3 _p17;
-        unsigned int BAs_kv;
+        unsigned int Ds;
         p3 _p18;
-        unsigned int Seqs_kv;
+        unsigned int Os;
         p3 _p19;
-        unsigned int Seqs_dkv;
+        unsigned int eGUs;
         p3 _p20;
+        unsigned int eDs;
+        p3 _p21;
+        unsigned int eGUQs;
+        p3 _p22;
+        unsigned int eDQs;
+        p3 _p23;
+        unsigned int eSMQs;
+        p3 _p24;
 #ifdef ASM_PRINT
         void *print;
 #endif
     } args;
     size_t arg_size = sizeof(args);
-    // args.ptr_c  = (void*)dev_c;
-    // args.ptr_a  = (void*)dev_a;
-    // args.ptr_b  = (void*)dev_b;
-    // args.alpha  = alpha;
-    // args.m      = m;
-    // args.n      = n;
-    // args.k      = k;
-    // args.lda    = lda;
-    // args.ldb    = ldb;
-    // args.ldc    = ldc;
     args.ptr_dq = (void *)dev_dq;
     args.ptr_dk = (void *)dev_dk;
     args.ptr_dv = (void *)dev_dv;
@@ -553,10 +524,9 @@ int main(int argc, char **argv)
     HIP_CALL(hipEventDestroy(evt_11));
 
     float time_per_loop = elapsed_ms / total_loop;
-    float gflops = (float)2 * 5 * b * h * d * s * s / time_per_loop / (1e6);
-    if(mask)
-       gflops = gflops/2;
-    printf("b:%d,h:%d,s:%d,d:%d, time: %.3f, gflops:%.3f\n", b, h, s, d, time_per_loop, gflops);
+    float gflops = (float)2 * b * topk * d * hdim *2 / time_per_loop / (1e6);
+
+    printf("b:%d,d:%d,hd:%d,e:%d,tpk:%d,evn:%d, time: %.3f, gflops:%.3f\n", b, d, hdim, d, eprt,topk,even_dist, time_per_loop, gflops);
     // if(validate){
     //     hgemm_cr_kpack2(host_c, host_a, host_b, alpha, m,n,k,lda/sizeof(float),ldb/sizeof(float),ldc/sizeof(float));
     //     HIP_CALL(hipMemcpy(fp16_c, dev_c, ldc*(n>>1), hipMemcpyDeviceToHost));
@@ -565,93 +535,33 @@ int main(int argc, char **argv)
     // }
     // printf("\n");
     
-    if ((atm_f32 == 1) || ((!skip_dq_rd)&&(atm_f32 == 2)))
-       HIP_CALL(hipMemcpy(host_fp32_dq, dev_dq, sz_mx_dq * sizeof(float), hipMemcpyDeviceToHost));
-    else
-    {
-       if (ioperm == 1)
-            HIP_CALL(hipMemcpy((void*)host_fp16_dq, dev_dq, sz_mx * sizeof(float) / 2, hipMemcpyDeviceToHost));
-       else
-       {
-            float16 *host_fp16_perm_dq = (float16 *)malloc(sz_mx * sizeof(float) / 2);
-            HIP_CALL(hipMemcpy(host_fp16_perm_dq, dev_dq, sz_mx * sizeof(float) / 2, hipMemcpyDeviceToHost));
-            fmha_batch_reshape(host_fp16_dq, host_fp16_perm_dq, b, h, s, d, FP16, ioperm, 1);
-            free(host_fp16_perm_dq);    
-       } 
-    }
-    if (ioperm == 1)
-    {
-       HIP_CALL(hipMemcpy(host_fp16_dk, dev_dk, sz_mx * sizeof(float) / 2, hipMemcpyDeviceToHost));
-       HIP_CALL(hipMemcpy(host_fp16_dv, dev_dv, sz_mx * sizeof(float) / 2, hipMemcpyDeviceToHost));
-    }
-    else 
-    {
-        float16 *host_fp16_perm_dk = (float16 *)malloc(sz_mx * sizeof(float) / 2);
-        float16 *host_fp16_perm_dv = (float16 *)malloc(sz_mx * sizeof(float) / 2);
-
-        HIP_CALL(hipMemcpy(host_fp16_perm_dk, dev_dk, sz_mx * sizeof(float) / 2, hipMemcpyDeviceToHost));
-        HIP_CALL(hipMemcpy(host_fp16_perm_dv, dev_dv, sz_mx * sizeof(float) / 2, hipMemcpyDeviceToHost));
-
-        fmha_batch_reshape(host_fp16_dk, host_fp16_perm_dk, b, h, s, d, FP16, ioperm, 1);
-        fmha_batch_reshape(host_fp16_dv, host_fp16_perm_dv, b, h, s, d, FP16, ioperm, 1);
-
-        free(host_fp16_perm_dk);
-        free(host_fp16_perm_dv);
-    }
-    if (atm_f32 == 1)
-       fmha_batch_cvt(host_fp16_dq, host_fp32_dq, b, h, s, d, FP16);
-    else if ((atm_f32 == 2)&&(!skip_dq_rd))
-    {
-        fmha_bwd_dQ_redc(host_fp32_dq, b, h, s, d, s/ts_kv);
-        fmha_batch_cvt(host_fp16_dq, host_fp32_dq, b, h, s, d, FP16);
-    }
-
+    HIP_CALL(hipMemcpy(host_O, dev_O, sz_O * sizeof(float) / 2, hipMemcpyDeviceToHost));
+     
     if (dump_result)
     { 
-        fmha_dump_batch_inHex(host_fp16_dq, "gpu_dQ.hex", b, h, s, d, FP16);
-        //fmha_dump_batch_inHex(host_fp32_dq, "gpu_dQ32.hex", b, h, s, d, FP32);
-        fmha_dump_batch_inHex(host_fp16_dk, "gpu_dK.hex", b, h, s, d, FP16);
-        fmha_dump_batch_inHex(host_fp16_dv, "gpu_dV.hex", b, h, s, d, FP16);
+        moe_dump_inHex(host_O,  "gpu_O.hex", 1, b, d, type);
     }
-    // free(host_a);
-    // free(host_b);
-    // free(host_c);
-    // free(fp16_a);
-    // free(fp16_b);
-    // free(fp16_c);
 
-    // hipFree(dev_a);
-    // hipFree(dev_b);
-    // hipFree(dev_c);
+    free(host_X);
+    free(host_G);
+    free(host_D);
+    free(host_O);
+    free(W_buf);
+    free(TKI_buf);
+    free(sorted_token_ids_ptr);
+    free(sorted_weight_buf);
+    free(sorted_expert_ids_ptr);
 
-    free(host_q);
-    free(host_k);
-    free(host_v);
-    free(host_do);
-    free(host_lse);
-    free(host_odo);
-    free(host_fp16_q);
-    free(host_fp16_k);
-    free(host_fp16_v);
-    free(host_fp16_do);
-    free(host_fp16_dq);
-    free(host_fp32_dq);
-    free(host_fp16_dk);
-    free(host_fp16_dv);
-
-    HIP_CALL(hipFree(dev_q));
-    HIP_CALL(hipFree(dev_k));
-    HIP_CALL(hipFree(dev_v));
-    HIP_CALL(hipFree(dev_do));
-    HIP_CALL(hipFree(dev_dq));
-    HIP_CALL(hipFree(dev_dk));
-    HIP_CALL(hipFree(dev_dv));
-    HIP_CALL(hipFree(dev_lse));
-    HIP_CALL(hipFree(dev_odo));
+    HIP_CALL(hipFree(dev_X));
+    HIP_CALL(hipFree(dev_G));
+    HIP_CALL(hipFree(dev_D));
+    HIP_CALL(hipFree(dev_O));
+    HIP_CALL(hipFree(dev_STP));
+    HIP_CALL(hipFree(dev_SW));
+    HIP_CALL(hipFree(dev_SEP));
 
 #ifdef ASM_PRINT
     free(host_print);
     hipFree(print);
 #endif
-    // printf("CU:%d, TIPS:%.3f(2x:%.3f, 4x:%.3f), cost:%fms per loop\n", num_cu, tips, 2*tips, 4*tips, time_per_loop);
 }
