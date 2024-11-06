@@ -19,11 +19,11 @@
 #define ASSERT_ON_FAIL
 #define MFMA
 // #define ASM_PRINT
-
+  
 #ifndef ABS
 #define ABS(x) ((x) > 0 ? (x) : -1 * (x))
 #endif
-
+   
 using float16 = half_float::half;
 static inline bool valid_vector(const float *ref, const float16 *pred, int n, double nrms = 1e-3)
 {
