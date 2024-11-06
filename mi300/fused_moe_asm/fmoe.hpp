@@ -1,8 +1,23 @@
 #ifndef FUSED_MOE_HPP
 #define FUSED_MOE_HPP
 
+#define BEXP16(x) ((x & 0x7c00) >> 10)
+#define MAN16(x)  (x & 0x3ff)
+#define SIGN16(x) ((x >> 15) & 1)
+#define BEXP32(x) ((x & 0x7f800000) >> 23)
+#define MAN32(x)  (x & 0x7fffff)
+#define SIGN32(x) (x >> 31)
+#define BEXP64(x) ((x & 0x7ff0000000000000ULL) >> 52)
+#define MAN64(x)  (x & 0xfffffffffffffULL)
+#define SIGN64(x) (x >> 63)
+#define FP16(s,e,m) ((s<<15) | (e<<10) | (m&0x3ff))
+#define FP32(s,e,m) ((s<<31) | (e<<23) | (m&0x7fffff))
+#define FP64(s,e,m) ((s<<63) | (e<<52) | (m&0xfffffffffffffULL))
+
 using cl_float          = float;
 using uint32            = unsigned int;
+using int32             = int;
+using uint16            = unsigned short;
 using float16           = half_float::half;
 using T                 = float16;
 
@@ -37,6 +52,115 @@ typedef struct TileSize {
     uint32 tileNumOfDWX4;
 } TileSize;
 
+uint32 FloatMapToInt(float in)
+{
+	return *((uint32 *)&in);
+}
+
+uint32 round_bf16_significand_rne(bool &is_significand_ovf, uint32 trail_sig_bf16)
+{
+    is_significand_ovf = false;
+    // trail_sig_bf16 is of the form 1.31
+    uint32 trail_significand = (trail_sig_bf16 >>  24) & 0x7f;
+    uint32 ulp_half_ulp      = (trail_sig_bf16 >>  23) & 0x3;    // 1.31 >> 23 = 1.8
+    uint32 or_remain         = (trail_sig_bf16 >>  0) & 0xffffff;
+    switch(ulp_half_ulp) {
+        case 0:
+        case 2:
+            break;
+        case 1:
+            if(or_remain) {
+                trail_significand += 1;
+            }
+            break;
+        case 3:
+            trail_significand += 1;
+            break;
+        default:
+            break;
+    }
+    is_significand_ovf = (((trail_significand >> 7) & 0x1) == 0x1);
+    return (trail_significand & 0x7f);   // trail_significand is of the form .7
+}
+
+uint32 FP32toBFP16(uint32 in, bool clamp=0)
+{
+    uint32  sign_f32                 = SIGN32(in);
+    uint32  trailing_significand_f32 = MAN32(in);
+    int32   exp_f32                  = BEXP32(in);
+    int32   unbiased_exp_f32         = exp_f32 - 127;
+    bool    is_f32_pre_scale_inf     = (exp_f32 == 0xff)
+                                        && (trailing_significand_f32 == 0);
+    bool    is_f32_pre_scale_nan     = (exp_f32 == 0xff)
+                                        && (trailing_significand_f32 != 0);
+    bool    is_f32_pre_scale_zero    = ((in & 0x7fffffff) == 0);
+    bool    is_f32_pre_scale_denorm  = (exp_f32 == 0x00)
+                                        && (trailing_significand_f32 != 0);
+    // normalize subnormal number
+    if (is_f32_pre_scale_denorm) {
+        unbiased_exp_f32 = -126;
+        for (uint32 mB = 22; mB >= 0; mB--) {
+            if ((trailing_significand_f32 >> mB) != 0) {
+                trailing_significand_f32 
+                                 = (trailing_significand_f32 << (23 - mB)) & 0x7fffff;
+                unbiased_exp_f32 = unbiased_exp_f32 - (23 - mB);
+                break;
+            }
+        }
+    }
+    // at this point, leading significand bit is always 1 for non-zero input
+
+    // at this point the exponent is the output exponent range
+
+    uint16_t bf16 = 0;
+
+    if (is_f32_pre_scale_inf) {
+        bf16 = (sign_f32 << 15) | ((clamp == 0) ? 0x7f80 : 0x7f7f);
+    } else if (is_f32_pre_scale_nan) {
+        bf16 = (sign_f32 << 15) | 0x7fff;
+    } else if (is_f32_pre_scale_zero) {
+        bf16 = (sign_f32 << 15) | 0x0;
+    } else {
+        if (unbiased_exp_f32 < -149) {
+            // scaled number is less than bf16 min subnorm; output 0
+            bf16 = (sign_f32 << 15) | 0x0;
+        } else if (unbiased_exp_f32 < -126) {
+            int32 exp_shift     = -126 - unbiased_exp_f32;
+            int32 unbiased_exp_bf16
+                                = unbiased_exp_f32 + exp_shift;
+            assert(unbiased_exp_bf16 == -126);
+            uint32 trail_sig_bf16 = (1 << 31) | (trailing_significand_f32 << 8);
+            trail_sig_bf16      >>= exp_shift;
+            bool   is_sig_ovf   = false;
+            trail_sig_bf16        = round_bf16_significand_rne(is_sig_ovf, trail_sig_bf16);
+            bf16 = (sign_f32 << 15)
+                    | ((is_sig_ovf ? 0x01 : 0x00) << 7)
+                    | (trail_sig_bf16 & 0x7f);
+        } else if (unbiased_exp_f32 < +128) {
+            // scaled number is in bf16 normal range
+            //  apply rne
+            uint32 biased_exp_bf16
+                                = unbiased_exp_f32 + 127;
+            uint32 trail_sig_bf16 = (1 << 31) | (trailing_significand_f32 << 8);
+            bool   is_sig_ovf   = false;
+            trail_sig_bf16        = round_bf16_significand_rne(is_sig_ovf, trail_sig_bf16);
+            biased_exp_bf16      += (is_sig_ovf ? 1 : 0);
+            if (biased_exp_bf16 == +255) {
+                bf16 = (sign_f32 << 15) | ((clamp == 0) ? 0x7f80 : 0x7f7f);
+            } else {
+                bf16 = (sign_f32 << 15)
+                        | ((biased_exp_bf16 & 0xff) << 7)
+                        | (trail_sig_bf16 & 0x7f);
+            }
+        } else {
+            // scaled number is greater than bf16 max normal output
+            //  clamp to bf16 flt_max/inf based on clamp control
+            bf16 = (sign_f32 << 15) | ((clamp == 0) ? 0x7f80 : 0x7f7f);
+        }
+    }
+
+    return (uint32)bf16;
+}
 double gaussrand()
 {
     static double V1, V2, S;
@@ -174,8 +298,8 @@ static void fmha_batch_init(TT *buffer, int batch, int head_num, int seq_len, in
                              buffer[offset] = __float2half_rn(temp_var);
                              break;
                         case BF16:
-                             //buffer[offset] = (uint16)FP32toBFP16(FloatMapToInt(temp_var));
-                             buffer[offset] = __float2half_rn(temp_var);
+                             buffer[offset] = (uint16)FP32toBFP16(FloatMapToInt(temp_var));
+                             //buffer[offset] = __float2half_rn(temp_var);
                              break;
                         //case FP8:
                         //     buffer[offset] = f32_to_fp8(FloatMapToInt(temp_var), 127, fp_format, f8_bias, true, false, 0);
