@@ -19,11 +19,11 @@
 #define ASSERT_ON_FAIL
 #define MFMA
 // #define ASM_PRINT
-  
+
 #ifndef ABS
 #define ABS(x) ((x) > 0 ? (x) : -1 * (x))
 #endif
-   
+
 using float16 = half_float::half;
 static inline bool valid_vector(const float *ref, const float16 *pred, int n, double nrms = 1e-3)
 {
@@ -250,12 +250,10 @@ int main(int argc, char **argv)
     std::cout << "sub_GU:" << sub_GU << std::endl;
 
     float16 *host_X, *host_G, *host_D, *host_O;
-    float *host_W;
-    unsigned int *host_TKI;
+    float *W_buf;
+    unsigned int *TKI_buf;
 
-    float16 *dev_X, *dev_G, *dev_D, *dev_O;
-    float *dev_W;
-    unsigned int *dev_TKI_buf;
+
 
     int sz_X, sz_G, sz_U, sz_D, sz_O, sz_W;
     sz_X        = b*d;
@@ -268,8 +266,8 @@ int main(int argc, char **argv)
     host_D = (float16 *)malloc(sz_D * sizeof(float) / 2);
     host_O = (float16 *)malloc(sz_O * sizeof(float) / 2);
 
-    host_W = (float *)malloc(sz_W * sizeof(float));
-    host_TKI = (unsigned int *)malloc(sz_W * sizeof(int));
+    W_buf = (float *)malloc(sz_W * sizeof(float));
+    TKI_buf = (unsigned int *)malloc(sz_W * sizeof(int));
 
     int init_pattern = 0;
     get_param(parsedOptions, "init_pattern", init_pattern);
@@ -287,7 +285,7 @@ int main(int argc, char **argv)
             }
             srand(++seed);
             //if even_dist==0, W_buf may be rewritten inside, depend on internal value useSimpleRandom
-            moe_topk_init(host_TKI, host_W, eprt, b, topk, even_dist, host_X, d, type, init_pattern);
+            moe_topk_init(TKI_buf, W_buf, eprt, b, topk, even_dist, host_X, d, type, init_pattern);
 
     memset(host_O, 0, sz_O * sizeof(float) / 2);
 
@@ -299,9 +297,9 @@ int main(int argc, char **argv)
         float* sorted_weight_buf     = malloc(sz_sw * sizeof(float));
         unsigned int*   sorted_expert_ids_ptr = malloc(sz_sep * sizeof(unsigned int));
 
-        moe_twe_ptr_gen(sorted_token_ids_ptr, sorted_weight_buf, sorted_expert_ids_ptr, sub_X_cnt, host_W, host_TKI, b, eprt, topk, sub_X);
+        moe_twe_ptr_gen(sorted_token_ids_ptr, sorted_weight_buf, sorted_expert_ids_ptr, sub_X_cnt, W_buf, TKI_buf, b, eprt, topk, sub_X);
 
-        if(dump_result)   
+        if(dump_result)
         {
             moe_dump_inHex(host_X,           "X.hex" ,       1,     b,       d,        type,   0); //batch*dim      row major
             moe_dump_inHex(host_G,           "G.hex" ,       eprt,  hdim,      d,        type,   1); //dim*hidden_dim col major
@@ -340,37 +338,30 @@ int main(int argc, char **argv)
         moe_shuffle(host_D, eprt, d,  hdim, true, type, layout);
 
    
+    float16 *dev_X, *dev_G, *dev_D, *dev_O;
+    unsigned int*  dev_STP;
+    float* dev_SW;
+    unsigned int*  dev_SEP;
 
     HIP_CALL(hipSetDevice(0));
-    // fp16 on device
-    // HIP_CALL(hipMalloc(&dev_a, lda*(k>>1)));
-    // HIP_CALL(hipMalloc(&dev_b, ldb*(k>>1)));
-    // HIP_CALL(hipMalloc(&dev_c, ldc*(n>>1)));
-    HIP_CALL(hipMalloc(&dev_dq, sz_mx_dq * sizeof(float)));
-    HIP_CALL(hipMalloc(&dev_dk, sz_mx * sizeof(float) / 2));
-    HIP_CALL(hipMalloc(&dev_dv, sz_mx * sizeof(float) / 2));
+ 
+    HIP_CALL(hipMalloc(&dev_X, sz_X * sizeof(float) / 2));
+    HIP_CALL(hipMalloc(&dev_G, sz_G * sizeof(float) / 2));
+    HIP_CALL(hipMalloc(&dev_D, sz_D * sizeof(float) / 2));
+    HIP_CALL(hipMalloc(&dev_O, sz_O * sizeof(float) / 2));
 
-    HIP_CALL(hipMalloc(&dev_q, (sz_mx + sz_mx_pad) * sizeof(float) / 2));
-    HIP_CALL(hipMalloc(&dev_k, (sz_mx + sz_mx_pad) * sizeof(float) / 2));
-    HIP_CALL(hipMalloc(&dev_v, (sz_mx + sz_mx_pad) * sizeof(float) / 2));
-    HIP_CALL(hipMalloc(&dev_do, (sz_mx + sz_mx_pad) * sizeof(float) / 2));
+    HIP_CALL(hipMalloc(&dev_STP, sz_stp * sizeof(unsigned int)));
+    HIP_CALL(hipMalloc(&dev_SW, sz_sw * sizeof(float)));
+    HIP_CALL(hipMalloc(&dev_SEP, sz_sep * sizeof(unsigned int)));
 
-    HIP_CALL(hipMalloc(&dev_lse, (sz_lsd + sz_lsd_pad) * sizeof(float)));
-    HIP_CALL(hipMalloc(&dev_odo, (sz_lsd + sz_lsd_pad) * sizeof(float)));
+    printf("dev_X:   start-%p, 0x%lxKB, end-%p\n", dev_X,  sz_X * sizeof(float) / 2/1024, dev_X+sz_X);
+    printf("dev_G:   start-%p, 0x%lxKB, end-%p\n", dev_G,  sz_G * sizeof(float) / 2/1024, dev_G+sz_G);
+    printf("dev_D:   start-%p, 0x%lxKB, end-%p\n", dev_D,  sz_D * sizeof(float) / 2/1024, dev_D+sz_D);
+    printf("dev_O:   start-%p, 0x%lxKB, end-%p\n", dev_O,  sz_O * sizeof(float) / 2/1024, dev_O+sz_O);
+    printf("dev_STP: start-%p, 0x%lxKB, end-%p\n", dev_STP,sz_stp * sizeof(unsigned int)/1024, dev_STP +sz_stp);
+    printf("dev_SW : start-%p, 0x%lxKB, end-%p\n", dev_SW, sz_sw * sizeof(float)/1024, dev_SW+sz_sw);
+    printf("dev_SEP: start-%p, 0x%lxKB, end-%p\n", dev_SEP,sz_sep * sizeof(unsigned int)/1024, dev_SEP+sz_sep);
 
-    printf("dev_dq: %p\n", dev_dq);
-    printf("dev_dk: %p\n", dev_dk);
-    printf("dev_dv: %p\n", dev_dv);
-    printf("dev_q: %p\n", dev_q);
-    printf("dev_k: %p\n", dev_k);
-    printf("dev_v: %p\n", dev_v);
-    printf("dev_do: %p\n", dev_do);
-    printf("dev_lse: %p\n", dev_lse);
-    printf("dev_odo: %p\n", dev_odo);
-
-    // fp16 cpy to device
-    // HIP_CALL(hipMemcpy(dev_a, fp16_a, lda*(k>>1), hipMemcpyHostToDevice));
-    // HIP_CALL(hipMemcpy(dev_b, fp16_b, ldb*(k>>1), hipMemcpyHostToDevice));
     if (ioperm == 1)
     {
         HIP_CALL(hipMemcpy(dev_q, host_fp16_q, sz_mx * sizeof(float) / 2, hipMemcpyHostToDevice));
