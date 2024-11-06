@@ -221,6 +221,8 @@ int main(int argc, char **argv)
     int sub_GU = 512;
     int dump_result = 0;
     int type = BF16;
+
+    int total_loop = 8;
     std::vector<std::string> options;
     for (int i = 1; i < argc; i++)
     {
@@ -237,6 +239,7 @@ int main(int argc, char **argv)
     get_param(parsedOptions, "seed", seed);
     get_param(parsedOptions, "sub_X", sub_X);
     get_param(parsedOptions, "sub_GU", sub_GU);
+    get_param(parsedOptions, "tl", total_loop);
 
     std::cout << "b:" << b << std::endl;
     std::cout << "d:" << d << std::endl;
@@ -248,6 +251,7 @@ int main(int argc, char **argv)
     std::cout << "seed:" << seed << std::endl;
     std::cout << "sub_X:" << sub_X << std::endl;
     std::cout << "sub_GU:" << sub_GU << std::endl;
+    std::cout << "total_loop:" << total_loop << std::endl;
 
     float16 *host_X, *host_G, *host_D, *host_O;
     float *W_buf;
@@ -444,27 +448,41 @@ int main(int argc, char **argv)
 #endif
     } args;
     size_t arg_size = sizeof(args);
-    args.ptr_dq = (void *)dev_dq;
-    args.ptr_dk = (void *)dev_dk;
-    args.ptr_dv = (void *)dev_dv;
-    args.ptr_q = (void *)dev_q;
-    args.ptr_k = (void *)dev_k;
-    args.ptr_v = (void *)dev_v;
-    args.ptr_do = (void *)dev_do;
-    args.ptr_lse = (void *)dev_lse;
-    args.ptr_odo = (void *)dev_odo;
-    args.scalar = k_scalar;
-    args.log2e = k_log2e;
-    args.seq_len = s;
-    args.Ts = stride_tg;
-    args.Hs = stride_head;
-    args.BAs = stride_batch;
-    args.Seqs = stride_seqlen;
-    args.ratio = qa_rt;
-    args.Hs_kv = stride_head_kv;
-    args.BAs_kv = stride_batch_kv;
-    args.Seqs_kv = stride_seqlen_kv;
-    args.Seqs_dkv = stride_seqlen_dkv;
+    int stride_X             = d    * sizeof(float)/2;
+    int stride_GU            = d    * sizeof(float)/2;
+    int stride_D             = hdim * sizeof(float)/2;
+    int stride_expert_GU     = stride_GU  * hdim;
+    int stride_expert_D      = stride_D   * d;
+    int stride_expert_GUDQN  = hdim * sizeof(float);
+    int stride_expert_DDQN   = d    * sizeof(float);
+    int stride_expert_SMTDQN = hdim * sizeof(float);
+    int stride_O             = d    * sizeof(float)/2;
+
+    args.ptr_O = (void *)dev_O;
+    args.ptr_X = (void *)dev_X;
+    args.ptr_G = (void *)dev_G;
+    args.ptr_U = (void *)NULL;
+    args.ptr_D = (void *)dev_D;
+    args.ptr_XQ = (void *)NULL;
+    args.ptr_GQ = (void *)NULL;
+    args.ptr_DQ = (void *)NULL;
+    args.ptr_SMQ = (void *)NULL;
+    args.ptr_STP = (void *)dev_STP;
+    args.ptr_SW = (void *)dev_SW;
+    args.ptr_SEP = (void *)dev_SEP;
+    args.dim = d;
+    args.hidden_dim = hdim;
+    args.token_cnt = b;
+    args.eprt_cnt = eprt;
+    args.Xs = stride_X;
+    args.GUs = stride_GU;
+    args.Ds = stride_D;
+    args.Os = stride_O;
+    args.eGUs = stride_expert_GU;
+    args.eDs = stride_expert_D;
+    args.eGUQs = stride_expert_GUDQN;
+    args.eDQs = stride_expert_DDQN;
+    args.eSMQs = stride_expert_SMTDQN;   
 #ifdef ASM_PRINT
     args.print = (void *)print;
 #endif
@@ -474,25 +492,21 @@ int main(int argc, char **argv)
     void *config[] = {HIP_LAUNCH_PARAM_BUFFER_POINTER, &args, HIP_LAUNCH_PARAM_BUFFER_SIZE,
                       &arg_size, HIP_LAUNCH_PARAM_END};
 
-    int total_loop = 8;
+    
     int warm_ups = 0;
     int i;
 
     int bdx = 256;
-    int gdx = (s+ts_kv-1) / ts_kv;
-    int gdy = h;
-    int gdz = b;
+    int gdx = ((hdim+sub_GU-1)/sub_GU);
+    int gdy = sub_X_cnt;
+    int gdz = 1;
 
-    if (mask && mask_kb)
-    {
-        int num_tg = (s+ts_kv-1) / ts_kv;
-        gdx = (num_tg%2) ? (num_tg/2+1) : (num_tg/2);
-    }
-
+    std::cout << "sub_X_cnt: " << sub_X_cnt << std::endl;
     for (i = 0; i < warm_ups; i++)
     {
         HIP_CALL(hipModuleLaunchKernel(kernel_func, gdx, gdy, gdz, bdx, 1, 1, 0, 0, NULL, (void **)&config));
-        std::cout << "safe here" << std::endl;
+        if (i == warm_ups-1)
+            std::cout << "warm up done" << std::endl;
     }
 
 #ifdef ASM_PRINT
@@ -514,7 +528,7 @@ int main(int argc, char **argv)
     for (i = 0; i < total_loop; i++)
         HIP_CALL(hipModuleLaunchKernel(kernel_func, gdx, gdy, gdz, bdx, 1, 1, 0, 0, NULL, (void **)&config));
 
-    std::cout << "we are done" << std::endl;
+    std::cout << "we are done, looped:" << total_loop << " times" << std::endl;
     float elapsed_ms;
     HIP_CALL(hipEventRecord(evt_11, NULL));
     HIP_CALL(hipEventSynchronize(evt_11));
