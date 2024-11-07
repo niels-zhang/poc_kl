@@ -124,6 +124,16 @@ int main(int argc, char **argv)
     get_param(parsedOptions, "init_pattern",init_pattern);
     get_param(parsedOptions, "layout",      layout);
 
+    if (dump_result == 1)//assump dump-enable is asking a smoke test
+    {
+       batch = 80;
+       dim = 1024;
+       hidden_dim = 1024;
+       eprt = 4;
+       topk = 1;
+       total_loop = 1;
+    }
+
     std::cout << "batch:"       << batch        << std::endl;
     std::cout << "dim:"         << dim          << std::endl;
     std::cout << "hidden_dim:"  << hidden_dim   << std::endl;
@@ -138,15 +148,6 @@ int main(int argc, char **argv)
     std::cout << "init_pattern:"<< init_pattern << std::endl;
     std::cout << "layout:"      << layout       << std::endl;
 
-    if (dump_result == 1)
-    {
-       batch = 80;
-       dim = 1024;
-       hidden_dim = 1024;
-       eprt = 4;
-       topk = 1;
-       total_loop = 1;
-    }
     //-----host buffer init-------//
     int sz_X, sz_G, sz_U, sz_D, sz_O, sz_W;
     int X_dqn_size;
