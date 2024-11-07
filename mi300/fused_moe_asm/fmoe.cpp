@@ -94,7 +94,7 @@ int main(int argc, char **argv)
     unsigned int hidden_dim = 1024;
     unsigned int eprt = 32;
     unsigned int topk = 5;
-    unsigned int dump_result = 0;
+    unsigned int dump_result = 1;
     unsigned int even_dist = 1;
     unsigned int seed = 0;
     unsigned int sub_X = 32;
@@ -138,6 +138,15 @@ int main(int argc, char **argv)
     std::cout << "init_pattern:"<< init_pattern << std::endl;
     std::cout << "layout:"      << layout       << std::endl;
 
+    if (dump_result == 1)
+    {
+       batch = 80;
+       dim = 1024;
+       hidden_dim = 1024;
+       eprt = 4;
+       topk = 1;
+       total_loop = 1;
+    }
     //-----host buffer init-------//
     int sz_X, sz_G, sz_U, sz_D, sz_O, sz_W;
     int X_dqn_size;
@@ -232,7 +241,10 @@ int main(int argc, char **argv)
     uint32*   sorted_token_ids_ptr  = (uint32*)   malloc(sz_stp * sizeof(uint32));
     cl_float* sorted_weight_buf     = (cl_float*) malloc(sz_sw  * sizeof(cl_float));
     uint32*   sorted_expert_ids_ptr = (uint32*)   malloc(sz_sep * sizeof(uint32));
+    uint32*   XC_buf                = (uint32*)   malloc(4);
     moe_twe_ptr_gen(sorted_token_ids_ptr, sorted_weight_buf, sorted_expert_ids_ptr, sub_X_cnt, W_buf, TKI_buf, batch, eprt, topk, sub_X);
+    XC_buf[0] = sub_X_cnt*sub_X;
+
     if(dump_result)   
     {
         moe_dump_inHex(X_buf,           "X.hex" ,       1,     batch,       dim,        type,   0); //batch*dim      row major
@@ -277,13 +289,14 @@ int main(int argc, char **argv)
     moe_shuffle(D_buf, eprt, dim,  hidden_dim, true, type, (DATA_LAYOUT)layout);
 
     float16 *dev_X, *dev_G, *dev_D, *dev_O;
-    unsigned int*  dev_STP;
+    unsigned int*  dev_STP, *dev_XC;
     float* dev_SW;
     unsigned int*  dev_SEP;
 
     HIP_CALL(hipSetDevice(0));
     HIP_CALL(hipMalloc(&dev_X, sz_X * sizeof(float) / 2));
     HIP_CALL(hipMalloc(&dev_G, sz_G * sizeof(float) / 2));
+    HIP_CALL(hipMalloc(&dev_XC, 4));
     HIP_CALL(hipMalloc(&dev_D, sz_D * sizeof(float) / 2));
     HIP_CALL(hipMalloc(&dev_O, sz_O * sizeof(float) / 2));
     HIP_CALL(hipMalloc(&dev_STP, sz_stp * sizeof(unsigned int)));
@@ -302,7 +315,8 @@ int main(int argc, char **argv)
     HIP_CALL(hipMemcpy(dev_G, G_buf,     sz_G * sizeof(float) / 2, hipMemcpyHostToDevice));
     HIP_CALL(hipMemcpy(dev_D, D_buf,     sz_D * sizeof(float) / 2, hipMemcpyHostToDevice));
     HIP_CALL(hipMemcpy(dev_O, gpu_O_buf, sz_O * sizeof(float) / 2, hipMemcpyHostToDevice));
-    
+
+    HIP_CALL(hipMemcpy(dev_XC,  XC_buf,   4, hipMemcpyHostToDevice));
     HIP_CALL(hipMemcpy(dev_STP, sorted_token_ids_ptr,  sz_stp * sizeof(unsigned int), hipMemcpyHostToDevice));
     HIP_CALL(hipMemcpy(dev_SW,  sorted_weight_buf,     sz_sw  * sizeof(float),        hipMemcpyHostToDevice));
     HIP_CALL(hipMemcpy(dev_SEP, sorted_expert_ids_ptr, sz_sep * sizeof(unsigned int), hipMemcpyHostToDevice));
@@ -333,7 +347,7 @@ int main(int argc, char **argv)
         p2 _p1;
         void *ptr_G;
         p2 _p2;
-        void *ptr_U;
+        void *ptr_XC;
         p2 _p3;
         void *ptr_D;
         p2 _p4;
@@ -395,7 +409,7 @@ int main(int argc, char **argv)
     args.ptr_O      = (void *)dev_O;
     args.ptr_X      = (void *)dev_X;
     args.ptr_G      = (void *)dev_G;
-    args.ptr_U      = (void *)NULL;
+    args.ptr_XC     = (void *)dev_XC;
     args.ptr_D      = (void *)dev_D;
     args.ptr_XQ     = (void *)NULL;
     args.ptr_GQ     = (void *)NULL;
@@ -430,7 +444,7 @@ int main(int argc, char **argv)
     int i;
     int bdx = 256;
     int gdx = ((hidden_dim+sub_GU-1)/sub_GU);
-    int gdy = sub_X_cnt;
+    int gdy = sz_sep;//sub_X_cnt;
     int gdz = 1;
 
     std::cout << "sub_X_cnt: " << sub_X_cnt << std::endl;
