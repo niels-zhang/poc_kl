@@ -94,7 +94,7 @@ int main(int argc, char **argv)
     unsigned int hidden_dim = 1024;
     unsigned int eprt = 32;
     unsigned int topk = 5;
-    unsigned int dump_result = 1;
+    unsigned int dump_result = 0;
     unsigned int even_dist = 1;
     unsigned int seed = 0;
     unsigned int sub_X = 32;
