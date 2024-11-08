@@ -1,9 +1,9 @@
 .text
-.global kernel_func
+.global fmoe_kernel_func
 .p2align 8
-.type kernel_func,@function
+.type fmoe_kernel_func,@function
 
-kernel_func:
+fmoe_kernel_func:
 
   s_and_b32     s1, s1, 0x0000ffff                      // 000000000000: 8601FF01 0000FFFF
   s_load_dwordx2  s[8:9], s[0:1], 0x00                  // 000000000008: C0060200 00000000
@@ -4095,7 +4095,7 @@ label_1B4C:
 
 .rodata
 .p2align 6
-.amdhsa_kernel kernel_func
+.amdhsa_kernel fmoe_kernel_func
     .amdhsa_group_segment_fixed_size 65536
     .amdhsa_user_sgpr_kernarg_segment_ptr 1
     .amdhsa_system_sgpr_workgroup_id_x 1
@@ -4113,8 +4113,8 @@ label_1B4C:
 ---
 amdhsa.version: [ 1, 0 ]
 amdhsa.kernels:
-  - .name: kernel_func
-    .symbol: kernel_func.kd
+  - .name: fmoe_kernel_func
+    .symbol: fmoe_kernel_func.kd
     .sgpr_count: 96
     .vgpr_count: 512
     .kernarg_segment_align: 4

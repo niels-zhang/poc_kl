@@ -43,8 +43,8 @@ static inline int get_int(const char *env_name, int def_value)
     return def_value;
 }
 
-#define HSACO "kernel.co"
-#define HSA_KERNEL "kernel_func"
+#define HSACO "fmoe.co"
+#define HSA_KERNEL "fmoe_kernel_func"
 
 std::map<std::string, unsigned int> parse_options(const std::vector<std::string> &optionList)
 {
