@@ -115,7 +115,8 @@ var _s_G_buf = 20
 var _s_SW_buf = 24
 var _s_STP_buf = 28
 var _s_SEP_buf = _s_STP_buf + 2  //30
-var _s_bf16_cvt = _s_SEP_buf + 2 //32
+var _s_Xc_buf = _s_SEP_buf + 2
+var _s_bf16_cvt = _s_Xc_buf + 2 //32
 var _s_X_lds_wr_base_m0 = _s_bf16_cvt + 2 //34
 var _s_restore_mask = _s_X_lds_wr_base_m0 + 2 //36
 
@@ -995,7 +996,7 @@ shader main
   s_load_dwordx2    s_regs(_s_R_buf, 0),    s[0:1], 0x0                 // get buffer R address  
   s_load_dwordx2    s_regs(_s_X_buf, 0),    s[0:1], 0x10                // get buffer X address 
   s_load_dwordx2    s_regs(_s_G_buf, 0),    s[0:1], 0x20                // get buffer G address
-  //s_load_dwordx2    s_regs(_s_U_buf, 0),    s[0:1], 0x30                // get buffer U address--reserved
+  s_load_dwordx2    s_regs(_s_Xc_buf, 0),    s[0:1], 0x30                // get buffer Xc address--reserved
   s_load_dwordx2    s_regs(_s_D_buf, 0),    s[0:1], 0x40                // get buffer D address
   //s_load_dwordx2    s_regs(_s_XQ_buf, 0),   s[0:1], 0x50                // get buffer X-quant address 
   //s_load_dwordx2    s_regs(_s_GQ_buf, 0),   s[0:1], 0x60                // get buffer G-quant address
@@ -1087,6 +1088,10 @@ shader main
   v_accvgpr_write   acc_regs(_v_acc_end, 0), 0
   v_mov_b32         v_regs(_v_arc_end, 0), 0
 
+  s_add_u32 s_tmp0, s_tg_idx, s_tg_idy
+  s_cmp_lt_i32 s_tmp0, 1
+  s_cbranch_scc0 label_main_loops_exit
+
   s_cmp_lt_i32 s_wave_id, 1
   s_cbranch_scc0 label_main_loops_exit
   
@@ -1096,8 +1101,8 @@ shader main
   v_mov_b32             v_regs(_v_tmp, 3),   s_regs(_s_X_buf , 1)
   v_mov_b32             v_regs(_v_tmp, 4),   s_regs(_s_G_buf , 0)
   v_mov_b32             v_regs(_v_tmp, 5),   s_regs(_s_G_buf , 1)
-  v_mov_b32             v_regs(_v_tmp, 6),   0xdead0001//s_regs(_s_U_buf , 0)
-  v_mov_b32             v_regs(_v_tmp, 7),   0xdead0001//s_regs(_s_U_buf , 1)
+  v_mov_b32             v_regs(_v_tmp, 6),   s_regs(_s_Xc_buf , 0)
+  v_mov_b32             v_regs(_v_tmp, 7),   s_regs(_s_Xc_buf , 1)
   v_mov_b32             v_regs(_v_tmp, 8),   s_regs(_s_D_buf , 0)
   v_mov_b32             v_regs(_v_tmp, 9),   s_regs(_s_D_buf , 1)
   v_mov_b32             v_regs(_v_tmp, 10),   0xdead0002//s_regs(_s_XQ_buf , 0)
@@ -1138,6 +1143,17 @@ for var i = 0 ;i < 10; i++
     buffer_store_dwordx4  v_regs(_v_tmp, i*4), v_regs(_v_arc_end, 0), s_regs(_s_R_buf, 0), 0  idxen:1
     v_add_u32   v_regs(_v_arc_end, 0),  4, v_regs(_v_arc_end, 0)
 end
+
+  s_and_b32       s_regs(_s_Xc_buf, 1),     s_regs(_s_Xc_buf, 1),      0xffff
+  s_load_dword    s_regs(_s_Xc_buf, 0),     s_regs(_s_Xc_buf, 0),      0x0 
+  s_waitcnt       lgkmcnt(0)
+
+  v_mov_b32       v_regs(_v_tmp, 40),   s_regs(_s_Xc_buf, 0)
+  v_mov_b32       v_regs(_v_tmp, 41),   s_regs(_s_Xc_buf, 1)
+  v_mov_b32       v_regs(_v_tmp, 42),   0xdead0009
+  v_mov_b32       v_regs(_v_tmp, 43),   0xdeadbeef
+  buffer_store_dwordx4  v_regs(_v_tmp, 40), v_regs(_v_arc_end, 0), s_regs(_s_R_buf, 0), 0  idxen:1
+  v_add_u32   v_regs(_v_arc_end, 0),  4, v_regs(_v_arc_end, 0)
 
 /*
 /////////////////////////////////////////////////////////////////
