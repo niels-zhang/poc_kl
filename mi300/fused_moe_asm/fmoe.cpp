@@ -222,7 +222,7 @@ int main(int argc, char **argv)
     //  (only for reference)    exp-0  exp-1     exp-2   exp-3          exp-4  exp-5
     // weight_id_per_expert is: [[a], [g, j, m], [d, k], [b, e, h, l, n], [], [c, f, i, o]]
     //
-    // max_tokens_post_padded : top_k * input_tokens + num_experts * (M_a - 1)
+    // max_tokens_post_padded : top_k * input_tokens + num_experts * M_a - topk
     // * this could be larger than actual, since actual tokens are on GPU
     //
     // sorted_token_ids_ptr   : [0, 6, 6, 6, 2, 3, 4, 6, 1, 3, 6, 6, 0, 1, 2, 3, 4, 6, 6, 6, 6, 6, 6, 6, 0, 1, 2, 5]
@@ -236,7 +236,7 @@ int main(int argc, char **argv)
     // sub_X_cnt = size of available sorted_expert_ids_ptr = 7
 
     uint32 sz_stp, sz_sw, sz_sep, sub_X_cnt = 0;//initialize sub_X_cnt to 0, important
-    sz_stp = sz_sw = topk*batch + eprt*sub_X-1; //max_length
+    sz_stp = sz_sw = topk*batch + eprt*sub_X-topk; //max_length
     sz_sep = (sz_stp + sub_X - 1)/sub_X;        //max_length
 
     uint32*   sorted_token_ids_ptr  = (uint32*)   malloc(sz_stp * sizeof(uint32));
